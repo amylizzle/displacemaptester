@@ -6,12 +6,12 @@ A tool for making displacement maps for BYOND using shader code
 # how to use
 You need to grab these dependencies:
 ```
-pip install gradio pyopengl
+pip install gradio pyopengl glfw
 ```
 
 then just run 
 ```
-python main.py
+python3 main.py
 ```
 connect to the address and futz with the shader code until something nice pops out.
 Download the displacement map with the button in the top right, and use it in BYOND or OpenDream to make lovely visual effects.
