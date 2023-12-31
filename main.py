@@ -304,6 +304,7 @@ def compileandrun(fragment_shader,width,height,displace_size):
 compileandrun(default_frag_shader, 160,160, 5)
 
 demo = gr.Interface(
+    analytics_enabled=False,
     fn=compileandrun,
     inputs=[
         gr.Code(label="Shader Fragment",lines=20, value=default_frag_shader, language="python", interactive=True),
