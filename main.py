@@ -9,25 +9,23 @@ from PIL import Image
 
 default_frag_shader = """
 #version 330
-out vec4 newColor;
-in vec2 outTexCoords;
+out vec4 fragColor;
+in vec2 UV;
 
 void main()
 {
-    vec2 iResolution = vec2(1.0,1.0);
-    vec2 uv = outTexCoords;
-    vec2 p = (-iResolution.xy + 2. * uv.xy) / iResolution.y; // -1 <> 1 by height
+    vec2 p = (UV * 2.0) - 1.0;
 
     // lensing
     vec2 displace = (p) * pow(1./max( length(p), .20) * .3, 3.);
-    vec2 newuv = uv-displace;
+    vec2 newUV = UV-displace;
 
     // calculate displacement map
-    vec4 col = vec4(-(uv.x-newuv.x) + 0.5, -(uv.y-newuv.y) + 0.5, 0.0, 1.0);
-    col *= 1.0 - 4.0*length(vec2(0.5) - uv.xy);
+    vec4 col = vec4(-(UV.x-newUV.x) + 0.5, -(UV.y-newUV.y) + 0.5, 0.0, 1.0);
+    col *= 1.0 - 4.0*length(vec2(0.5) - UV.xy);
     
     // Output to screen
-    newColor = vec4(col);
+    fragColor = vec4(col);
 }
 
 """
@@ -35,8 +33,8 @@ void main()
 displacement_frag_shader = """
 #version 330
 
-out vec4 newColor;
-in vec2 outTexCoords;
+out vec4 fragColor;
+in vec2 UV;
 
 uniform highp float size;
 uniform highp float x;
@@ -45,7 +43,6 @@ uniform sampler2D displacement_map;
 uniform sampler2D source_image;
 
 void main() {
-    vec2 uv = outTexCoords;
     highp vec2 iResolution = textureSize(source_image, 0);
     highp vec2 dResolution = textureSize(displacement_map, 0); //this one is its original size
 
@@ -53,7 +50,7 @@ void main() {
     vec2 maxdistortion = size/iResolution.xy;
     
 
-    vec2 subcoord = ((uv * textureSize(source_image, 0)/dResolution) + (0.5 - (textureSize(source_image, 0)/dResolution)/2.0)) + offset;
+    vec2 subcoord = ((UV * textureSize(source_image, 0)/dResolution) + (0.5 - (textureSize(source_image, 0)/dResolution)/2.0)) + offset;
     //sample the displacement map
     vec4 dis = texture(displacement_map, subcoord);
     dis.r = (clamp(dis.r, 0.5-maxdistortion.x, 0.5+maxdistortion.x) - 0.5) * dis.a;//center them and apply alpha
@@ -61,9 +58,9 @@ void main() {
 
     vec2 dis_coord = vec2(dis.r, -dis.g)/2.0;
     // Sample the texture
-    vec4 col = texture(source_image, uv+dis_coord);
+    vec4 col = texture(source_image, UV+dis_coord);
     // Output to screen
-    newColor = col;
+    fragColor = col;
 }
 """
 
@@ -74,13 +71,13 @@ vertex_shader = """
 in layout(location = 0) vec3 position;
 in layout(location = 1) vec4 color;
 in layout(location = 2) vec2 inTexCoords;
-out vec4 newColor;
-out vec2 outTexCoords;
+out vec4 fragColor;
+out vec2 UV;
 void main()
 {
     gl_Position = vec4(position, 1.0f);
-    newColor = color;
-    outTexCoords = inTexCoords;
+    fragColor = color;
+    UV = inTexCoords;
 }
 """
 def GLInit():
@@ -170,15 +167,20 @@ def GLShutdown(window):
 def compileandrun(fragment_shader,width,height,displace_size):
     window = GLInit()
     # Compile shaders
-    shader_frag = OpenGL.GL.shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER)
-    displace_shader_frag = OpenGL.GL.shaders.compileShader(displacement_frag_shader, GL_FRAGMENT_SHADER)
-    shader = OpenGL.GL.shaders.compileProgram(OpenGL.GL.shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
-                                              shader_frag)
-    displacement_shader = OpenGL.GL.shaders.compileProgram(OpenGL.GL.shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
-                                              displace_shader_frag)
+    try:
+        shader_frag = OpenGL.GL.shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER)
+        displace_shader_frag = OpenGL.GL.shaders.compileShader(displacement_frag_shader, GL_FRAGMENT_SHADER)
+        shader = OpenGL.GL.shaders.compileProgram(OpenGL.GL.shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
+                                                shader_frag)
+        displacement_shader = OpenGL.GL.shaders.compileProgram(OpenGL.GL.shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
+                                                displace_shader_frag)
+    except OpenGL.GL.shaders.ShaderCompilationError as e:
+        GLShutdown(window)
+        raise gr.Error(e.args[0])
 
     log = glGetShaderInfoLog(shader_frag)
-    print(log)
+    if(len(log) > 0):
+        gr.Warning("Shader compile messages:\n"+log)
     log = glGetShaderInfoLog(displace_shader_frag)
     print(log)
 
