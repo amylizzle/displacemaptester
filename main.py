@@ -10,7 +10,8 @@ from PIL import Image
 default_frag_shader = """
 #version 330
 out vec4 fragColor;
-in vec2 UV;
+in vec2 UV; 
+uniform ivec2 iResolution; // viewport resolution (in pixels)
 
 void main()
 {
@@ -203,6 +204,8 @@ def compileandrun(fragment_shader,width,height,displace_size):
 
     # Install program
     glUseProgram(shader)
+    iResolutionLocation = glGetUniformLocation(shader, "iResolution")
+    glUniform2i(iResolutionLocation, int(width), int(height))
 
     # Bind framebuffer and set viewport size
     glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
