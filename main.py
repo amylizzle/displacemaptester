@@ -12,6 +12,7 @@ default_frag_shader = """
 out vec4 fragColor;
 in vec2 UV; 
 uniform ivec2 iResolution; // viewport resolution (in pixels)
+uniform float iTime; // current frame normalised (0.0 to 1.0)
 
 void main()
 {
@@ -22,7 +23,7 @@ void main()
     vec2 newUV = UV-displace;
 
     // calculate displacement map
-    vec4 col = vec4(-(UV.x-newUV.x) + 0.5, -(UV.y-newUV.y) + 0.5, 0.0, 1.0);
+    vec4 col = vec4((UV.x-newUV.x) + 0.5, (UV.y-newUV.y) + 0.5, 0.0, 1.0);
     col *= 1.0 - 4.0*length(vec2(0.5) - UV.xy);
     
     // Output to screen
@@ -57,7 +58,7 @@ void main() {
     dis.r = (clamp(dis.r, 0.5-maxdistortion.x, 0.5+maxdistortion.x) - 0.5) * dis.a;//center them and apply alpha
     dis.g = (clamp(dis.g, 0.5-maxdistortion.y, 0.5+maxdistortion.y) - 0.5) * dis.a; 
 
-    vec2 dis_coord = vec2(dis.r, -dis.g)/2.0;
+    vec2 dis_coord = vec2(dis.r, dis.g)/2.0;
     // Sample the texture
     vec4 col = texture(source_image, UV+dis_coord);
     // Output to screen
@@ -165,7 +166,7 @@ def GLShutdown(window):
     # Terminate program
     glfw.terminate()
 
-def compileandrun(fragment_shader,width,height,displace_size):
+def compileandrun(fragment_shader,width,height,displace_size,max_frames):
     window = GLInit()
     # Compile shaders
     try:
@@ -183,141 +184,168 @@ def compileandrun(fragment_shader,width,height,displace_size):
     if(len(log) > 0):
         gr.Warning("Shader compile messages:\n"+log)
     log = glGetShaderInfoLog(displace_shader_frag)
-    print(log)
-
-    # Create render buffer with size (image.width x image.height)
-    rb_obj = glGenRenderbuffers(1)
-    glBindRenderbuffer(GL_RENDERBUFFER, rb_obj)
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, width, height)
-
-    # Create frame buffer
-    fb_obj = glGenFramebuffers(1)
-    glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_obj)
-
-    # Check frame buffer (that simple buffer should not be an issue)
-    status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-    if status != GL_FRAMEBUFFER_COMPLETE:
-        print("incomplete framebuffer object")
-        glfw.terminate()
-        return
-
-    # Install program
-    glUseProgram(shader)
-    iResolutionLocation = glGetUniformLocation(shader, "iResolution")
-    glUniform2i(iResolutionLocation, int(width), int(height))
-
-    # Bind framebuffer and set viewport size
-    glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
-    glViewport(0, 0, width, height)
-
-    # Draw the quad which covers the entire viewport
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
-
-    # PNG
-    # Read the data and create the image
-    image_buffer = glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE)
-    image_out = numpy.frombuffer(image_buffer, dtype=numpy.uint8)
-    image_out = image_out.reshape(height, width, 4)
-    displace_map = Image.fromarray(image_out, 'RGBA')
-
-    # Now take the displacement map, put it in texture2 and rerun with displacement shader
-    # Texture
-    displace_texture = glGenTextures(1)
-    # Bind texture
-    glBindTexture(GL_TEXTURE_2D, displace_texture)
-    # Texture wrapping params
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-    # Texture filtering params
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-
-    # create an empty framebuffer of the desired size - this is where the displacement map will go in the second round
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_out)
-
-    # Texture
-    test_image_texture = glGenTextures(1)
-    # Bind texture
-    glBindTexture(GL_TEXTURE_2D, test_image_texture)
-    # Texture wrapping params
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-    # Texture filtering params
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    if(len(log) > 0):
+        print(log)
 
     test_image = Image.open("test_image.png")
-    img_data = test_image.convert("RGBA").tobytes()
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, test_image.width, test_image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
+    test_img_data = test_image.convert("RGBA").tobytes()
 
-    # Create render buffer with size (test_image.width x test_image.height)
-    rb_obj = glGenRenderbuffers(1)
-    glBindRenderbuffer(GL_RENDERBUFFER, rb_obj)
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, test_image.width, test_image.height)
+    for curframe in range(1,max_frames+1): #1 index to make iTime = 1.0 for frames = 1
+        # Create render buffer with size (image.width x image.height)
+        rb_obj = glGenRenderbuffers(1)
+        glBindRenderbuffer(GL_RENDERBUFFER, rb_obj)
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, width, height)
 
-    # Create frame buffer
-    fb_obj = glGenFramebuffers(1)
-    glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_obj)
+        # Create frame buffer
+        fb_obj = glGenFramebuffers(1)
+        glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_obj)
 
-    # Check frame buffer (that simple buffer should not be an issue)
-    status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-    if status != GL_FRAMEBUFFER_COMPLETE:
-        print("incomplete framebuffer object")
-        glfw.terminate()
-        return
+        # Check frame buffer (that simple buffer should not be an issue)
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            print("incomplete framebuffer object")
+            glfw.terminate()
+            return
 
-    # Install program
-    glUseProgram(displacement_shader)
-    paramDMapLocation = glGetUniformLocation(displacement_shader, "displacement_map")
-    paramSourceLocation = glGetUniformLocation(displacement_shader, "source_image")
-    paramSizeLocation = glGetUniformLocation(displacement_shader, "size")
+        # Install program
+        glUseProgram(shader)
+        iResolutionLocation = glGetUniformLocation(shader, "iResolution")
+        glUniform2i(iResolutionLocation, int(width), int(height))
+        iTimeLocation = glGetUniformLocation(shader, "iTime")
+        glUniform1f(iTimeLocation, curframe/max_frames)
 
-    # Bind the displacement texture to texture unit 0
-    glActiveTexture(GL_TEXTURE0)
-    glBindTexture(GL_TEXTURE_2D, displace_texture)
-    # Set the "displacement_map" uniform to the texture unit 0
-    glUniform1i(paramDMapLocation, 0)
+        # Bind framebuffer and set viewport size
+        glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
+        glViewport(0, 0, width, height)
 
-    # Bind the test image texture to texture unit 1
-    glActiveTexture(GL_TEXTURE1)
-    glBindTexture(GL_TEXTURE_2D, test_image_texture)
-    # Set the "source_image" uniform to the texture unit 1
-    glUniform1i(paramSourceLocation, 1)
+        # Draw the quad which covers the entire viewport
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
 
-    glUniform1f(paramSizeLocation, displace_size)
+        # PNG
+        # Read the data and create the image
+        image_buffer = glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE)
+        image_out = numpy.frombuffer(image_buffer, dtype=numpy.uint8)
+        image_out = image_out.reshape(height, width, 4)
+        displace_map_frame = Image.fromarray(image_out, 'RGBA')
+        if curframe == 1:
+            displace_map = [displace_map_frame]
+        else:
+            displace_map.append(displace_map_frame)
 
-    # Bind framebuffer and set viewport size
-    glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
-    glViewport(0, 0, test_image.width, test_image.height)
+        # Now take the displacement map, put it in texture2 and rerun with displacement shader
+        # Texture
+        displace_texture = glGenTextures(1)
+        # Bind texture
+        glBindTexture(GL_TEXTURE_2D, displace_texture)
+        # Texture wrapping params
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        # Texture filtering params
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
 
-    # Draw the quad which covers the entire viewport
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+        # create an empty framebuffer of the desired size - this is where the displacement map will go in the second round
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_out)
 
-    # PNG
-    # Read the data and create the image
-    image_buffer = glReadPixels(0, 0, test_image.width, test_image.height, GL_RGBA, GL_UNSIGNED_BYTE)
-    image_out = numpy.frombuffer(image_buffer, dtype=numpy.uint8)
-    image_out = image_out.reshape(test_image.height, test_image.width, 4)
-    applied_image = Image.fromarray(image_out, 'RGBA')
+        # Texture
+        test_image_texture = glGenTextures(1)
+        # Bind texture
+        glBindTexture(GL_TEXTURE_2D, test_image_texture)
+        # Texture wrapping params
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        # Texture filtering params
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, test_image.width, test_image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, test_img_data)
+
+        # Create render buffer with size (test_image.width x test_image.height)
+        rb_obj = glGenRenderbuffers(1)
+        glBindRenderbuffer(GL_RENDERBUFFER, rb_obj)
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, test_image.width, test_image.height)
+
+        # Create frame buffer
+        fb_obj = glGenFramebuffers(1)
+        glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_obj)
+
+        # Check frame buffer (that simple buffer should not be an issue)
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            print("incomplete framebuffer object")
+            glfw.terminate()
+            return
+
+        # Install program
+        glUseProgram(displacement_shader)
+        paramDMapLocation = glGetUniformLocation(displacement_shader, "displacement_map")
+        paramSourceLocation = glGetUniformLocation(displacement_shader, "source_image")
+        paramSizeLocation = glGetUniformLocation(displacement_shader, "size")
+
+        # Bind the displacement texture to texture unit 0
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, displace_texture)
+        # Set the "displacement_map" uniform to the texture unit 0
+        glUniform1i(paramDMapLocation, 0)
+
+        # Bind the test image texture to texture unit 1
+        glActiveTexture(GL_TEXTURE1)
+        glBindTexture(GL_TEXTURE_2D, test_image_texture)
+        # Set the "source_image" uniform to the texture unit 1
+        glUniform1i(paramSourceLocation, 1)
+
+        glUniform1f(paramSizeLocation, displace_size)
+
+        # Bind framebuffer and set viewport size
+        glBindFramebuffer(GL_FRAMEBUFFER, fb_obj)
+        glViewport(0, 0, test_image.width, test_image.height)
+
+        # Draw the quad which covers the entire viewport
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+
+        # PNG
+        # Read the data and create the image
+        image_buffer = glReadPixels(0, 0, test_image.width, test_image.height, GL_RGBA, GL_UNSIGNED_BYTE)
+        image_out = numpy.frombuffer(image_buffer, dtype=numpy.uint8)
+        image_out = image_out.reshape(test_image.height, test_image.width, 4)
+        applied_image_frame = Image.fromarray(image_out, 'RGBA')
+        if curframe == 1:
+            applied_image = [applied_image_frame]
+        else:
+            applied_image.append(applied_image_frame)
 
     GLShutdown(window)
+    applied_image[0].save('test.png', save_all=True, append_images=applied_image[1:])
+    displace_map[0].save('test_displace.png', save_all=True, append_images=displace_map[1:])
+    # Create a new image with the calculated size
+    spritesheet = Image.new('RGBA', (width, height*len(displace_map)))
 
-    return displace_map, applied_image
+    # Paste each image into the spritesheet
+    for i, img in enumerate(displace_map):
+        spritesheet.paste(img, (0, (len(displace_map)-i) * height)) #do it in reverse order so the first frame is at the bottom - makes it easier to import using dreammaker
 
-compileandrun(default_frag_shader, 160,160, 5)
+    # Save the spritesheet
+    spritesheet.save("displace_map_sprites.png")
+   
+    return "test_displace.png", "test.png", gr.Button("Download Spritesheet", link="/file=displace_map_sprites.png")
+
+compileandrun(default_frag_shader, 160,160, 5, 5)
 
 demo = gr.Interface(
     analytics_enabled=False,
+    allow_flagging="never",
     fn=compileandrun,
     inputs=[
         gr.Code(label="Shader Fragment",lines=20, value=default_frag_shader, language="python", interactive=True),
         gr.Slider(label="Output width",minimum=16, maximum=640, step=16, value=480),
         gr.Slider(label="Output height",minimum=16, maximum=640, step=16, value=480),
         gr.Slider(label="Displacement magnitude",minimum=0, maximum=100, step=1, value=5),
+        gr.Slider(label="Frames",minimum=1, maximum=100, step=1, value=1),
     ],
-    outputs=["image","image"],
+    outputs=["image","image",gr.Button("Download Spritesheet")]
 )
 
-demo.launch()
+demo.launch(allowed_paths=["displace_map_sprites.png"])
