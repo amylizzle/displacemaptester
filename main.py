@@ -1,6 +1,4 @@
 import gradio as gr
-
-
 import glfw
 from OpenGL.GL import *
 import OpenGL.GL.shaders
@@ -83,9 +81,9 @@ void main()
 }
 """
 def GLInit():
-# Initialize glfw
+    # We gotta make a temp window for rendering. There's probably a way to do this headless, but IDK what it is
     if not glfw.init():
-        return
+        raise gr.Error("Could not initialize OpenGL context")
 
     # Create window
     window = glfw.create_window(1, 1, "Temp window, please ignore", None, None)  # Size (1, 1) for show nothing in window
@@ -93,7 +91,7 @@ def GLInit():
     # Terminate if any issue
     if not window:
         glfw.terminate()
-        return
+        raise gr.Error("Could not initialize Window")
 
     # Set context to window
     glfw.make_context_current(window)
@@ -136,7 +134,7 @@ def GLInit():
     return window
 
 def GLShutdown(window):
-       # Bind default frame buffer (0)
+    # Bind default frame buffer (0)
     glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     # Set viewport rectangle to window size
@@ -239,13 +237,14 @@ def compileandrun(fragment_shader,width,height,displace_size,max_frames):
         # Bind texture
         glBindTexture(GL_TEXTURE_2D, displace_texture)
         # Texture wrapping params
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        # clamp to border so it only shows once, in the middle
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
         # Texture filtering params
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
 
-        # create an empty framebuffer of the desired size - this is where the displacement map will go in the second round
+        # put the displacement map in the texture
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_out)
 
         # Texture
@@ -259,7 +258,7 @@ def compileandrun(fragment_shader,width,height,displace_size,max_frames):
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
 
-
+        # pu the test image in the texture
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, test_image.width, test_image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, test_img_data)
 
         # Create render buffer with size (test_image.width x test_image.height)
@@ -275,9 +274,8 @@ def compileandrun(fragment_shader,width,height,displace_size,max_frames):
         # Check frame buffer (that simple buffer should not be an issue)
         status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
         if status != GL_FRAMEBUFFER_COMPLETE:
-            print("incomplete framebuffer object")
             glfw.terminate()
-            return
+            raise gr.Error("incomplete framebuffer object")
 
         # Install program
         glUseProgram(displacement_shader)
@@ -318,6 +316,7 @@ def compileandrun(fragment_shader,width,height,displace_size,max_frames):
             applied_image.append(applied_image_frame)
 
     GLShutdown(window)
+
     applied_image[0].save('test.png', save_all=True, append_images=applied_image[1:])
     displace_map[0].save('test_displace.png', save_all=True, append_images=displace_map[1:])
     # Create a new image with the calculated size
